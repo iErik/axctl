@@ -882,11 +882,20 @@ func (h *Hyprland) SetKeyboardLayouts(layouts string, variants string) error {
 
 func (h *Hyprland) GetCapabilities() (ipc.Capabilities, error) {
 	return ipc.Capabilities{
+		ID:                  "hyprland",
+		Layouts:             []string{"dwindle", "master", "scrolling"},
+		LayoutSwitch:        true,
 		Blur:                true,
 		Shadows:             true,
+		Shadow: ipc.ShadowCapabilities{
+			Enabled: true, Size: true, Color: true, Offset: true,
+			RenderPower: true, Scale: true, Sharp: true, IgnoreWindow: true,
+		},
 		Animations:          true,
 		RoundedCorners:      true,
 		WorkspacesSupported: true,
 		WindowsSupported:    true,
+		SpecialWorkspaces:   true,
+		InnerOuterGaps:      true,
 	}, nil
 }

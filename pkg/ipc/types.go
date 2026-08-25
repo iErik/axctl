@@ -33,13 +33,30 @@ type Monitor struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type ShadowCapabilities struct {
+	Enabled      bool `json:"enabled"`
+	Size         bool `json:"size"`
+	Color        bool `json:"color"`
+	Offset       bool `json:"offset"`
+	RenderPower  bool `json:"render_power"`
+	Scale        bool `json:"scale"`
+	Sharp        bool `json:"sharp"`
+	IgnoreWindow bool `json:"ignore_window"`
+}
+
 type Capabilities struct {
-	Blur                bool `json:"blur"`
-	Shadows             bool `json:"shadows"`
-	Animations          bool `json:"animations"`
-	RoundedCorners      bool `json:"rounded_corners"`
-	WorkspacesSupported bool `json:"workspaces_supported"`
-	WindowsSupported    bool `json:"windows_supported"`
+	ID                    string              `json:"id"`
+	Layouts               []string            `json:"layouts"`
+	LayoutSwitch          bool                `json:"layout_switch"`
+	Blur                  bool                `json:"blur"`
+	Shadows               bool                `json:"shadows"`
+	Shadow                ShadowCapabilities  `json:"shadow"`
+	Animations            bool                `json:"animations"`
+	RoundedCorners        bool                `json:"rounded_corners"`
+	WorkspacesSupported   bool                `json:"workspaces_supported"`
+	WindowsSupported      bool                `json:"windows_supported"`
+	SpecialWorkspaces     bool                `json:"special_workspaces"`
+	InnerOuterGaps        bool                `json:"inner_outer_gaps"`
 }
 
 // EventType represents the type of event occurring in the compositor.

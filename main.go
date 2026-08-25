@@ -502,6 +502,8 @@ func handleRPC(category string, args []string) {
 		if len(args) > 1 {
 			params["payload"] = args[1]
 		}
+	case "System.GetCapabilities":
+		// no params
 	case "System.Execute":
 		if len(args) > 1 {
 			params["command"] = args[1]

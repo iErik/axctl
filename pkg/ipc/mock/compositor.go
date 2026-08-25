@@ -572,11 +572,20 @@ func (m *Compositor) SetKeyboardLayouts(layouts string, variants string) error {
 
 func (m *Compositor) GetCapabilities() (ipc.Capabilities, error) {
 	return ipc.Capabilities{
+		ID:                  "mock",
+		Layouts:             []string{"dwindle", "master", "scrolling"},
+		LayoutSwitch:        true,
 		Blur:                true,
 		Shadows:             true,
+		Shadow: ipc.ShadowCapabilities{
+			Enabled: true, Size: true, Color: true, Offset: true,
+			RenderPower: true, Scale: true, Sharp: true, IgnoreWindow: true,
+		},
 		Animations:          true,
 		RoundedCorners:      true,
 		WorkspacesSupported: true,
 		WindowsSupported:    true,
+		SpecialWorkspaces:   true,
+		InnerOuterGaps:      true,
 	}, nil
 }

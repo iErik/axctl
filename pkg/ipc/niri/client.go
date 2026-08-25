@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -619,11 +620,79 @@ func (n *Niri) SetDpms(monitorID string, on bool) error {
 }
 
 func (n *Niri) Execute(command string) error {
-	return n.request(map[string]interface{}{
-		"Action": map[string]interface{}{
-			"Spawn": map[string]interface{}{"command": []string{"sh", "-c", command}},
-		},
-	}, nil)
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return nil
+	}
+
+	fields := strings.SplitN(cmd, " ", 2)
+	dispatcher := fields[0]
+	arg := ""
+	if len(fields) > 1 {
+		arg = strings.TrimSpace(fields[1])
+	}
+
+	switch strings.ToLower(dispatcher) {
+	case "exec":
+		return n.request(map[string]interface{}{
+			"Action": map[string]interface{}{
+				"Spawn": map[string]interface{}{"command": []string{"sh", "-c", arg}},
+			},
+		}, nil)
+	case "killactive", "closewindow":
+		return n.CloseWindow("")
+	case "fullscreen":
+		return n.SetFullscreen("", true)
+	case "togglefloating":
+		return n.ToggleFloating("")
+	case "movefocus":
+		return n.FocusDir(arg)
+	case "movewindow":
+		return n.MoveWindow("", arg)
+	case "workspace":
+		switch arg {
+		case "r+1", "e+1", "+1":
+			return n.request(map[string]interface{}{
+				"Action": map[string]interface{}{"FocusWorkspaceDown": map[string]interface{}{}},
+			}, nil)
+		case "r-1", "e-1", "-1":
+			return n.request(map[string]interface{}{
+				"Action": map[string]interface{}{"FocusWorkspaceUp": map[string]interface{}{}},
+			}, nil)
+		default:
+			if strings.HasPrefix(arg, "special") {
+				fmt.Printf("axctl niri: ignoring special workspace command %q\n", cmd)
+				return nil
+			}
+			return n.SwitchWorkspace(arg)
+		}
+	case "movetoworkspace", "movetoworkspacesilent":
+		if strings.HasPrefix(arg, "special") {
+			fmt.Printf("axctl niri: ignoring special workspace command %q\n", cmd)
+			return nil
+		}
+		return n.MoveToWorkspace("", arg)
+	case "togglespecialworkspace":
+		fmt.Printf("axctl niri: ignoring special workspace command %q\n", cmd)
+		return nil
+	case "movewindowpixel":
+		fmt.Printf("axctl niri: ignoring pixel move %q (tiled niri windows have no pixel placement)\n", cmd)
+		return nil
+	case "layoutmsg":
+		parts := strings.Fields(arg)
+		if len(parts) >= 2 && parts[0] == "colresize" {
+			delta := parts[1]
+			if !strings.HasSuffix(delta, "%") && (strings.HasPrefix(delta, "+") || strings.HasPrefix(delta, "-")) {
+				delta += "%"
+			}
+			return n.SetLayoutProperty("", "width", delta)
+		}
+		fmt.Printf("axctl niri: ignoring unsupported layoutmsg %q\n", cmd)
+		return nil
+	default:
+		fmt.Printf("axctl niri: ignoring unsupported command %q\n", cmd)
+		return nil
+	}
 }
 
 func (n *Niri) Exit() error {
@@ -785,11 +854,20 @@ func (n *Niri) SetKeyboardLayouts(layouts string, variants string) error {
 
 func (n *Niri) GetCapabilities() (ipc.Capabilities, error) {
 	return ipc.Capabilities{
-		Blur:                true,
+		ID:                  "niri",
+		Layouts:             []string{},
+		LayoutSwitch:        false,
+		Blur:                false,
 		Shadows:             true,
+		Shadow: ipc.ShadowCapabilities{
+			Enabled: true, Size: true, Color: true, Offset: true,
+			RenderPower: false, Scale: false, Sharp: false, IgnoreWindow: false,
+		},
 		Animations:          true,
 		RoundedCorners:      true,
 		WorkspacesSupported: true,
 		WindowsSupported:    true,
+		SpecialWorkspaces:   false,
+		InnerOuterGaps:      false,
 	}, nil
 }

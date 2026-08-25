@@ -1206,11 +1206,20 @@ func (m *Mango) SetKeyboardLayouts(layouts string, variants string) error {
 
 func (m *Mango) GetCapabilities() (ipc.Capabilities, error) {
 	return ipc.Capabilities{
+		ID:                  "mango",
+		Layouts:             []string{"tile", "scroller", "monocle"},
+		LayoutSwitch:        true,
 		Blur:                true,
 		Shadows:             true,
+		Shadow: ipc.ShadowCapabilities{
+			Enabled: true, Size: true, Color: true, Offset: true,
+			RenderPower: false, Scale: false, Sharp: false, IgnoreWindow: false,
+		},
 		Animations:          true,
 		RoundedCorners:      true,
 		WorkspacesSupported: true,
 		WindowsSupported:    true,
+		SpecialWorkspaces:   false,
+		InnerOuterGaps:      true,
 	}, nil
 }

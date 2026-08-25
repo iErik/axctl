@@ -924,6 +924,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 				result = mediaResult
 			}
 
+		case "System.GetCapabilities":
+			result, err = s.compositor.GetCapabilities()
 		case "System.Exit":
 			err = s.compositor.Exit()
 		case "System.SwitchKeyboardLayout":

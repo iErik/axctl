@@ -2,6 +2,8 @@ package niri
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"axctl/pkg/ipc"
@@ -9,35 +11,66 @@ import (
 
 type Generator struct{}
 
-// NewGenerator returns a new instance of the Niri config generator
 func NewGenerator() *Generator {
 	return &Generator{}
 }
 
-func formatNiriColor(hexStr string) string {
-	if hexStr == "" {
+var rgbFuncRe = regexp.MustCompile(`(?i)^rgba?\(([0-9a-f]+)\)$`)
+
+func formatNiriColor(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return "#00000000"
 	}
-	if strings.HasPrefix(hexStr, "#") {
-		return hexStr
-	}
-	return "#" + hexStr
-}
-
-func parseNiriColorString(str string) []string {
-	if str == "" {
-		return nil
-	}
-	parts := strings.Fields(str)
-	var colors []string
-
-	for _, part := range parts {
-		if !strings.HasSuffix(part, "deg") {
-			colors = append(colors, formatNiriColor(part))
+	if m := rgbFuncRe.FindStringSubmatch(raw); len(m) == 2 {
+		hex := m[1]
+		if len(hex) == 6 {
+			return "#" + hex
+		}
+		if len(hex) == 8 {
+			// niri wants #RRGGBBAA
+			return "#" + hex
 		}
 	}
+	if strings.HasPrefix(raw, "#") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "rgb") {
+		return raw
+	}
+	return "#" + raw
+}
 
-	return colors
+func parseNiriColorsAndAngle(str string) (colors []string, angle int) {
+	angle = 45
+	if str == "" {
+		return nil, angle
+	}
+	parts := strings.Fields(str)
+	for _, part := range parts {
+		if strings.HasSuffix(part, "deg") {
+			if n, err := strconv.Atoi(strings.TrimSuffix(part, "deg")); err == nil {
+				angle = n
+			}
+			continue
+		}
+		colors = append(colors, formatNiriColor(part))
+	}
+	return colors, angle
+}
+
+func writeNiriColorOrGradient(out *strings.Builder, indent, colorKey, gradientKey, value string) {
+	colors, angle := parseNiriColorsAndAngle(value)
+	if len(colors) == 0 {
+		return
+	}
+	if len(colors) == 1 {
+		out.WriteString(fmt.Sprintf("%s%s \"%s\"\n", indent, colorKey, colors[0]))
+		return
+	}
+	from := colors[0]
+	to := colors[len(colors)-1]
+	out.WriteString(fmt.Sprintf("%s%s from=\"%s\" to=\"%s\" angle=%d\n", indent, gradientKey, from, to, angle))
 }
 
 func (g *Generator) GenerateAppearance(config ipc.ConfigAppearance) string {
@@ -51,35 +84,51 @@ func (g *Generator) GenerateAppearance(config ipc.ConfigAppearance) string {
 		out.WriteString(fmt.Sprintf("    gaps %d\n", *config.Gaps.Inner))
 	}
 
+	// Prefer window borders from Ambxst; turn the default focus-ring off.
+	out.WriteString("    focus-ring {\n        off\n    }\n")
+
 	if config.Border != nil {
 		out.WriteString("    border {\n")
+		out.WriteString("        on\n")
 		if config.Border.Width != nil {
 			out.WriteString(fmt.Sprintf("        width %d\n", *config.Border.Width))
 		}
 		if config.Border.ActiveColor != nil {
-			colors := parseNiriColorString(*config.Border.ActiveColor)
-			if len(colors) > 0 {
-				out.WriteString(fmt.Sprintf("        active-color \"%s\"\n", colors[0]))
-			}
+			writeNiriColorOrGradient(&out, "        ", "active-color", "active-gradient", *config.Border.ActiveColor)
 		}
 		if config.Border.InactiveColor != nil {
-			colors := parseNiriColorString(*config.Border.InactiveColor)
-			if len(colors) > 0 {
-				out.WriteString(fmt.Sprintf("        inactive-color \"%s\"\n", colors[0]))
-			}
+			writeNiriColorOrGradient(&out, "        ", "inactive-color", "inactive-gradient", *config.Border.InactiveColor)
 		}
 		out.WriteString("    }\n")
 	}
+
+	if config.Shadow != nil {
+		out.WriteString("    shadow {\n")
+		if config.Shadow.Enabled != nil && !*config.Shadow.Enabled {
+			out.WriteString("        off\n")
+		} else {
+			out.WriteString("        on\n")
+		}
+		if config.Shadow.Size != nil {
+			out.WriteString(fmt.Sprintf("        softness %d\n", *config.Shadow.Size))
+		}
+		if config.Shadow.Color != nil {
+			out.WriteString(fmt.Sprintf("        color \"%s\"\n", formatNiriColor(*config.Shadow.Color)))
+		}
+		out.WriteString("    }\n")
+	}
+
 	out.WriteString("}\n\n")
 
-	if config.Animations != nil && config.Animations.Enabled != nil {
-		out.WriteString("animations {\n")
-		// niri typically has something like off or on, we'll keep it simple
-		if !*config.Animations.Enabled {
-			out.WriteString("    // Animations disabled via axctl config mapping\n")
-			out.WriteString("    // Currently Niri might not have a global disable, but we signify it here.\n")
-		}
-		out.WriteString("}\n")
+	if config.Border != nil && config.Border.Rounding != nil && *config.Border.Rounding > 0 {
+		out.WriteString("window-rule {\n")
+		out.WriteString(fmt.Sprintf("    geometry-corner-radius %d\n", *config.Border.Rounding))
+		out.WriteString("    clip-to-geometry true\n")
+		out.WriteString("}\n\n")
+	}
+
+	if config.Animations != nil && config.Animations.Enabled != nil && !*config.Animations.Enabled {
+		out.WriteString("animations {\n    off\n}\n\n")
 	}
 
 	return out.String()
@@ -91,10 +140,10 @@ func formatModifiers(mods []string) string {
 	}
 	var mapped []string
 	for _, m := range mods {
-		switch m {
-		case "SUPER":
+		switch strings.ToUpper(m) {
+		case "SUPER", "MOD":
 			mapped = append(mapped, "Mod")
-		case "CTRL":
+		case "CTRL", "CONTROL":
 			mapped = append(mapped, "Ctrl")
 		case "ALT":
 			mapped = append(mapped, "Alt")
@@ -105,6 +154,84 @@ func formatModifiers(mods []string) string {
 		}
 	}
 	return strings.Join(mapped, "+")
+}
+
+func mapDispatcherToNiri(dispatcher, arg string) (string, bool) {
+	d := strings.ToLower(strings.TrimSpace(dispatcher))
+	a := strings.TrimSpace(arg)
+	switch d {
+	case "exec":
+		escaped := strings.ReplaceAll(a, `"`, `\"`)
+		return fmt.Sprintf("spawn-sh \"%s\"", escaped), true
+	case "killactive", "closewindow":
+		return "close-window", true
+	case "fullscreen", "fullscreenstate":
+		return "fullscreen-window", true
+	case "togglefloating":
+		return "toggle-window-floating", true
+	case "movefocus":
+		switch a {
+		case "l", "left":
+			return "focus-column-left", true
+		case "r", "right":
+			return "focus-column-right", true
+		case "u", "up":
+			return "focus-window-or-workspace-up", true
+		case "d", "down":
+			return "focus-window-or-workspace-down", true
+		}
+	case "movewindow":
+		switch a {
+		case "l", "left":
+			return "move-column-left", true
+		case "r", "right":
+			return "move-column-right", true
+		case "u", "up":
+			return "move-window-up-or-to-workspace-up", true
+		case "d", "down":
+			return "move-window-down-or-to-workspace-down", true
+		}
+	case "workspace":
+		switch a {
+		case "r+1", "e+1", "+1":
+			return "focus-workspace-down", true
+		case "r-1", "e-1", "-1":
+			return "focus-workspace-up", true
+		default:
+			if a != "" && !strings.HasPrefix(a, "special") {
+				return fmt.Sprintf("focus-workspace %s", a), true
+			}
+		}
+	case "movetoworkspace", "movetoworkspacesilent":
+		if a != "" && a != "special" && !strings.HasPrefix(a, "special") {
+			return fmt.Sprintf("move-window-to-workspace %s", a), true
+		}
+	case "layoutmsg":
+		fields := strings.Fields(a)
+		if len(fields) == 0 {
+			return "", false
+		}
+		switch fields[0] {
+		case "colresize":
+			delta := "10%"
+			if len(fields) > 1 {
+				delta = fields[1]
+			}
+			if strings.HasPrefix(delta, "+") || strings.HasPrefix(delta, "-") {
+				if !strings.HasSuffix(delta, "%") {
+					delta += "%"
+				}
+				return fmt.Sprintf("set-column-width \"%s\"", delta), true
+			}
+		case "focus":
+			return mapDispatcherToNiri("movefocus", strings.Join(fields[1:], " "))
+		case "movewindowto":
+			return mapDispatcherToNiri("movewindow", strings.Join(fields[1:], " "))
+		}
+	case "togglespecialworkspace", "movewindowpixel", "resizeactive", "resizewindow":
+		return "", false
+	}
+	return "", false
 }
 
 func (g *Generator) GenerateKeybinds(config ipc.ConfigKeybinds) string {
@@ -128,16 +255,10 @@ func (g *Generator) GenerateKeybinds(config ipc.ConfigKeybinds) string {
 		if dispatcher == "" {
 			dispatcher = "exec"
 		}
-		arg := kb.Argument
 
-		action := ""
-		if dispatcher == "exec" {
-			action = fmt.Sprintf("spawn \"%s\"", arg)
-		} else {
-			action = dispatcher
-			if arg != "" {
-				action += fmt.Sprintf(" %s", arg)
-			}
+		action, ok := mapDispatcherToNiri(dispatcher, kb.Argument)
+		if !ok {
+			return
 		}
 
 		line := fmt.Sprintf("    %s { %s; }", combo, action)
@@ -174,17 +295,25 @@ func (g *Generator) GenerateWindowRules(rules []ipc.WindowRule) string {
 	var out strings.Builder
 	out.WriteString("// Generated by axctl ConfigGenerator (Window Rules)\n")
 	out.WriteString("// Do not edit manually!\n\n")
-	out.WriteString("window-rules {\n")
 
 	for _, r := range rules {
-		if r.Match != "" && r.Rule != "" {
-			out.WriteString(fmt.Sprintf("    match %s {\n", r.Match))
-			out.WriteString(fmt.Sprintf("        %s\n", r.Rule)) // simplistic approach
-			out.WriteString("    }\n")
+		if r.Rounding != nil && *r.Rounding > 0 {
+			out.WriteString("window-rule {\n")
+			out.WriteString(fmt.Sprintf("    geometry-corner-radius %d\n", *r.Rounding))
+			out.WriteString("    clip-to-geometry true\n")
+			out.WriteString("}\n\n")
+			continue
+		}
+		if r.Match != "" {
+			out.WriteString("window-rule {\n")
+			out.WriteString(fmt.Sprintf("    match %s\n", r.Match))
+			if r.Rule != "" {
+				out.WriteString(fmt.Sprintf("    %s\n", r.Rule))
+			}
+			out.WriteString("}\n\n")
 		}
 	}
 
-	out.WriteString("}\n")
 	return out.String()
 }
 
@@ -192,12 +321,34 @@ func (g *Generator) GenerateLayerRules(rules []ipc.LayerRule) string {
 	var out strings.Builder
 	out.WriteString("// Generated by axctl ConfigGenerator (Layer Rules)\n")
 	out.WriteString("// Do not edit manually!\n\n")
-	// Niri doesn't have layer rules in the same way as Hyprland
-	// Output a comment indicating this
-	out.WriteString("// Layer rules not supported in Niri\n")
+
+	seen := map[string]bool{}
+	for _, r := range rules {
+		ns := strings.TrimSpace(r.Namespace)
+		if ns == "" || seen[ns] {
+			continue
+		}
+		seen[ns] = true
+		out.WriteString("layer-rule {\n")
+		out.WriteString(fmt.Sprintf("    match namespace=\"^%s$\"\n", regexp.QuoteMeta(ns)))
+		out.WriteString("    place-within-backdrop true\n")
+		out.WriteString("}\n\n")
+	}
+
 	return out.String()
 }
 
 func (g *Generator) GenerateStartup(exec []string, execOnce []string) string {
-	return ""
+	var out strings.Builder
+	seen := map[string]bool{}
+	for _, cmd := range append(append([]string{}, execOnce...), exec...) {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" || seen[cmd] {
+			continue
+		}
+		seen[cmd] = true
+		escaped := strings.ReplaceAll(cmd, `"`, `\"`)
+		out.WriteString(fmt.Sprintf("spawn-at-startup \"sh\" \"-c\" \"%s\"\n", escaped))
+	}
+	return out.String()
 }

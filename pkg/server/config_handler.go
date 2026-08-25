@@ -39,7 +39,12 @@ func NewConfigHandlerWithOutput(c ipc.Compositor, outputPath string) *ConfigHand
 
 	resolvedPath := outputPath
 	if resolvedPath == "" {
-		resolvedPath = DefaultOutputPath()
+		switch c.(type) {
+		case *niri.Niri:
+			resolvedPath = DefaultNiriOutputPath()
+		default:
+			resolvedPath = DefaultOutputPath()
+		}
 	}
 
 	return &ConfigHandler{compositor: c, generator: gen, luaGen: lg, outputPath: resolvedPath}
@@ -51,6 +56,14 @@ func DefaultOutputPath() string {
 		homeDir = "/root"
 	}
 	return filepath.Join(homeDir, ".local", "share", "ambxst", "hyprland.conf")
+}
+
+func DefaultNiriOutputPath() string {
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/root"
+	}
+	return filepath.Join(homeDir, ".local", "share", "ambxst", "niri.kdl")
 }
 
 func (h *ConfigHandler) ApplyConfig(payload ipc.ConfigUniversal) error {

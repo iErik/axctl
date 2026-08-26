@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,26 +40,46 @@ func (n *Niri) request(req interface{}, resp interface{}) error {
 		return err
 	}
 
+	// Niri answers with a bare `{"Ok": …}` or `{"Err": …}` — there is no
+	// enclosing "Reply" object.
 	var reply struct {
-		Reply struct {
-			Ok  json.RawMessage `json:"Ok"`
-			Err json.RawMessage `json:"Err"`
-		} `json:"Reply"`
+		Ok  json.RawMessage `json:"Ok"`
+		Err json.RawMessage `json:"Err"`
 	}
 
 	if err := json.NewDecoder(conn).Decode(&reply); err != nil {
 		return err
 	}
 
-	if len(reply.Reply.Err) > 0 && string(reply.Reply.Err) != "null" {
-		return fmt.Errorf("niri error: %s", string(reply.Reply.Err))
+	if len(reply.Err) > 0 && string(reply.Err) != "null" {
+		return fmt.Errorf("niri error: %s", string(reply.Err))
 	}
 
-	if resp != nil {
-		return json.Unmarshal(reply.Reply.Ok, resp)
+	if resp == nil {
+		return nil
 	}
 
-	return nil
+	if len(reply.Ok) == 0 {
+		return fmt.Errorf("niri returned an empty reply")
+	}
+
+	return json.Unmarshal(unwrapVariant(reply.Ok), resp)
+}
+
+// unwrapVariant strips the tag off a serde-tagged enum. Niri wraps every query
+// result in the name of the request that produced it — `{"Windows": […]}`,
+// `{"Outputs": {…}}` — so the body the caller wants is one level in. Anything
+// that is not a single-key object (an action's `"Handled"`, say) is returned
+// untouched.
+func unwrapVariant(raw json.RawMessage) json.RawMessage {
+	var variant map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &variant); err != nil || len(variant) != 1 {
+		return raw
+	}
+	for _, body := range variant {
+		return body
+	}
+	return raw
 }
 
 func (n *Niri) parseWindowID(id string) (int, error) {
@@ -417,38 +438,77 @@ func (n *Niri) MoveToWorkspace(windowID, workspaceID string) error {
 	}, nil)
 }
 
-func (n *Niri) ListMonitors() ([]ipc.Monitor, error) {
-	var niriOutputs []struct {
-		Name  string `json:"name"`
-		Make  string `json:"make"`
-		Model string `json:"model"`
-		Modes []struct {
-			Width       int     `json:"width"`
-			Height      int     `json:"height"`
-			RefreshRate float64 `json:"refresh_rate"`
-		} `json:"modes"`
-		CurrentMode *int `json:"current_mode"`
-		Logical     *struct {
-			X         int     `json:"x"`
-			Y         int     `json:"y"`
-			Width     int     `json:"width"`
-			Height    int     `json:"height"`
-			Scale     float64 `json:"scale"`
-			Transform string  `json:"transform"`
-		} `json:"logical"`
+type niriOutput struct {
+	Name  string `json:"name"`
+	Make  string `json:"make"`
+	Model string `json:"model"`
+	Modes []struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+		// Millihertz, not Hz.
+		RefreshRate int `json:"refresh_rate"`
+	} `json:"modes"`
+	CurrentMode *int `json:"current_mode"`
+	Logical     *struct {
+		X         int     `json:"x"`
+		Y         int     `json:"y"`
+		Width     int     `json:"width"`
+		Height    int     `json:"height"`
+		Scale     float64 `json:"scale"`
+		Transform string  `json:"transform"`
+	} `json:"logical"`
+}
+
+// FocusedOutput is a separate query: the Outputs reply says nothing about
+// which one has focus, and a caller with no focused monitor cannot place
+// anything on screen.
+func (n *Niri) focusedOutputName() string {
+	var out *struct {
+		Name string `json:"name"`
 	}
-	err := n.request("Outputs", &niriOutputs)
-	if err != nil {
+	if err := n.request("FocusedOutput", &out); err != nil || out == nil {
+		return ""
+	}
+	return out.Name
+}
+
+func (n *Niri) ListMonitors() ([]ipc.Monitor, error) {
+	// Keyed by output name, not a list.
+	var niriOutputs map[string]niriOutput
+	if err := n.request("Outputs", &niriOutputs); err != nil {
 		return nil, err
 	}
-	res := make([]ipc.Monitor, len(niriOutputs))
-	for i, o := range niriOutputs {
+
+	names := make([]string, 0, len(niriOutputs))
+	for name := range niriOutputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	focusedName := n.focusedOutputName()
+
+	// Which workspace each output is showing — the shell reads it off the
+	// monitor rather than cross-referencing the workspace list.
+	activeWorkspace := make(map[string]string)
+	if workspaces, err := n.ListWorkspaces(); err == nil {
+		for _, ws := range workspaces {
+			if ws.IsActive {
+				activeWorkspace[ws.MonitorID] = ws.ID
+			}
+		}
+	}
+
+	res := make([]ipc.Monitor, len(names))
+	for i, name := range names {
+		o := niriOutputs[name]
 		m := ipc.Monitor{
-			ID:          o.Name,
-			Name:        o.Name,
-			Description: fmt.Sprintf("%s %s", o.Make, o.Model),
-			IsFocused:   false, // Niri doesn't provide this directly here
-			Metadata:    make(map[string]interface{}),
+			ID:          name,
+			Name:        name,
+			Description: strings.TrimSpace(fmt.Sprintf("%s %s", o.Make, o.Model)),
+			IsFocused:   name == focusedName,
+			Metadata: map[string]interface{}{
+				"active_workspace": activeWorkspace[name],
+			},
 		}
 		if o.Logical != nil {
 			m.Width = o.Logical.Width
@@ -460,7 +520,7 @@ func (n *Niri) ListMonitors() ([]ipc.Monitor, error) {
 		}
 		if o.CurrentMode != nil && *o.CurrentMode < len(o.Modes) {
 			mode := o.Modes[*o.CurrentMode]
-			m.RefreshRate = mode.RefreshRate
+			m.RefreshRate = float64(mode.RefreshRate) / 1000.0
 			if m.Width == 0 {
 				m.Width = mode.Width
 			}
@@ -718,11 +778,15 @@ func (n *Niri) Subscribe() (<-chan ipc.Event, error) {
 		defer close(ch)
 		dec := json.NewDecoder(conn)
 		for {
-			var eventWrapper struct {
-				Event map[string]json.RawMessage `json:"Event"`
-			}
+			// Niri writes the reply to the EventStream request first, then
+			// one bare `{"<EventName>": {…}}` object per event — there is no
+			// enclosing "Event" object to unwrap.
+			var eventWrapper map[string]json.RawMessage
 			if err := dec.Decode(&eventWrapper); err != nil {
 				break
+			}
+			if _, isReply := eventWrapper["Ok"]; isReply {
+				continue
 			}
 
 			event := ipc.Event{
@@ -730,7 +794,7 @@ func (n *Niri) Subscribe() (<-chan ipc.Event, error) {
 				Payload:   make(map[string]interface{}),
 			}
 
-			for name, data := range eventWrapper.Event {
+			for name, data := range eventWrapper {
 				switch name {
 				case "WorkspacesChanged":
 					event.Type = ipc.EventWorkspaceChanged
@@ -854,11 +918,11 @@ func (n *Niri) SetKeyboardLayouts(layouts string, variants string) error {
 
 func (n *Niri) GetCapabilities() (ipc.Capabilities, error) {
 	return ipc.Capabilities{
-		ID:                  "niri",
-		Layouts:             []string{},
-		LayoutSwitch:        false,
-		Blur:                false,
-		Shadows:             true,
+		ID:           "niri",
+		Layouts:      []string{},
+		LayoutSwitch: false,
+		Blur:         false,
+		Shadows:      true,
 		Shadow: ipc.ShadowCapabilities{
 			Enabled: true, Size: true, Color: true, Offset: true,
 			RenderPower: false, Scale: false, Sharp: false, IgnoreWindow: false,

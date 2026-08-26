@@ -41,22 +41,33 @@ func New(c ipc.Compositor, path string) *Server {
 }
 
 func (s *Server) initCache() {
+	// A failure here leaves the cache empty, which every client reads as "this
+	// compositor has no windows/workspaces/monitors" rather than as an error —
+	// so say something rather than starting up silently broken.
 	w, err := s.compositor.ListWindows()
-	if err == nil {
+	if err != nil {
+		fmt.Printf("[Server] Error listing windows: %v\n", err)
+	} else {
 		s.cache.SetWindows(w)
 	}
 
-	if activeID, err := s.compositor.ActiveWindow(); err == nil && activeID != "" {
+	if activeID, err := s.compositor.ActiveWindow(); err != nil {
+		fmt.Printf("[Server] Error getting active window: %v\n", err)
+	} else if activeID != "" {
 		s.cache.MarkWindowFocused(activeID)
 	}
 
 	ws, err := s.compositor.ListWorkspaces()
-	if err == nil {
+	if err != nil {
+		fmt.Printf("[Server] Error listing workspaces: %v\n", err)
+	} else {
 		s.cache.SetWorkspaces(ws)
 	}
 
 	m, err := s.compositor.ListMonitors()
-	if err == nil {
+	if err != nil {
+		fmt.Printf("[Server] Error listing monitors: %v\n", err)
+	} else {
 		s.cache.SetMonitors(m)
 	}
 }

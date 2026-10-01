@@ -299,6 +299,12 @@ func mapKeyToNiri(key string) string {
 	return key
 }
 
+// Hyprland encodes bind variants as suffix letters on the `bind` keyword:
+// `r` fires on release, `l` keeps the bind live while the session is locked.
+func hasBindFlag(flags, flag string) bool {
+	return strings.Contains(strings.ToLower(flags), flag)
+}
+
 // keyIsRepresentable reports whether combo can stand as a KDL node name inside
 // `binds {}`. A Hyprland key niri has no name for would otherwise be written
 // out verbatim and cost the whole file: niri refuses to load a config it
@@ -319,6 +325,15 @@ func (g *Generator) GenerateKeybinds(config ipc.ConfigKeybinds) string {
 
 	addBind := func(kb ipc.Keybind, comment string) {
 		if !kb.Enabled || kb.Key == "" {
+			return
+		}
+
+		// Niri has no release trigger — Trigger is keysym/mouse/scroll only.
+		// Emitting a release bind as an ordinary one is worse than dropping
+		// it: these sit on bare modifiers (tap-Super-to-launch), so they would
+		// fire the moment the modifier goes down and hijack every chord that
+		// starts with it.
+		if hasBindFlag(kb.Flags, "r") {
 			return
 		}
 
@@ -363,7 +378,12 @@ func (g *Generator) GenerateKeybinds(config ipc.ConfigKeybinds) string {
 		}
 		seen[combo] = true
 
-		line := fmt.Sprintf("    %s { %s; }", combo, action)
+		props := ""
+		if hasBindFlag(kb.Flags, "l") {
+			props = " allow-when-locked=true"
+		}
+
+		line := fmt.Sprintf("    %s%s { %s; }", combo, props, action)
 		if comment != "" {
 			line += fmt.Sprintf(" // %s", comment)
 		}

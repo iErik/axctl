@@ -84,3 +84,27 @@ func TestGenerateKeybindsDropsDuplicateCombos(t *testing.T) {
 		t.Errorf("first binding should win:\n%s", out)
 	}
 }
+
+// Niri cannot express a release trigger. Ambxst's tap-Super-to-launch bind
+// sits on the bare modifier, so emitting it as an ordinary bind fires it the
+// moment Super goes down — opening the launcher on every Super+<key> chord.
+func TestGenerateKeybindsDropsReleaseBinds(t *testing.T) {
+	g := &Generator{}
+	release := bind([]string{"SUPER"}, "Super_L", "exec", "ambxst run launcher")
+	release.Flags = "r"
+
+	locked := bind(nil, "XF86AudioRaiseVolume", "exec", "ambxst volume up")
+	locked.Flags = "le"
+
+	out := g.GenerateKeybinds(ipc.ConfigKeybinds{
+		Custom: []ipc.Keybind{release, locked},
+	})
+
+	if strings.Contains(out, "Super_L") {
+		t.Errorf("release bind was emitted:\n%s", out)
+	}
+	want := `    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "ambxst volume up"; }`
+	if !strings.Contains(out, want) {
+		t.Errorf("expected %q in:\n%s", want, out)
+	}
+}

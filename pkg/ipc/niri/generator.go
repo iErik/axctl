@@ -305,6 +305,26 @@ func hasBindFlag(flags, flag string) bool {
 	return strings.Contains(strings.ToLower(flags), flag)
 }
 
+// isModifierKeysym reports whether the key is itself a modifier. Niri has no
+// release trigger, so a release bind has to be emitted as a press bind — which
+// is a fair substitute on an ordinary key, where press and release bracket the
+// same deliberate chord, but not on a modifier, where the press is the opening
+// of every chord that uses it.
+func isModifierKeysym(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "super_l", "super_r",
+		"alt_l", "alt_r",
+		"control_l", "control_r",
+		"shift_l", "shift_r",
+		"meta_l", "meta_r",
+		"hyper_l", "hyper_r",
+		"iso_level3_shift", "iso_level5_shift",
+		"caps_lock", "num_lock":
+		return true
+	}
+	return false
+}
+
 // keyIsRepresentable reports whether combo can stand as a KDL node name inside
 // `binds {}`. A Hyprland key niri has no name for would otherwise be written
 // out verbatim and cost the whole file: niri refuses to load a config it
@@ -328,12 +348,12 @@ func (g *Generator) GenerateKeybinds(config ipc.ConfigKeybinds) string {
 			return
 		}
 
-		// Niri has no release trigger — Trigger is keysym/mouse/scroll only.
-		// Emitting a release bind as an ordinary one is worse than dropping
-		// it: these sit on bare modifiers (tap-Super-to-launch), so they would
-		// fire the moment the modifier goes down and hijack every chord that
-		// starts with it.
-		if hasBindFlag(kb.Flags, "r") {
+		// Niri has no release trigger, so a release bind becomes a press
+		// bind. That only misbehaves when the key is a modifier — a
+		// tap-Super-to-launch bind would then fire the moment Super goes
+		// down and hijack every chord starting with it — so drop those and
+		// let the rest through.
+		if hasBindFlag(kb.Flags, "r") && isModifierKeysym(kb.Key) {
 			return
 		}
 

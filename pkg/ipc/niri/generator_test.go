@@ -96,12 +96,22 @@ func TestGenerateKeybindsDropsReleaseBinds(t *testing.T) {
 	locked := bind(nil, "XF86AudioRaiseVolume", "exec", "ambxst volume up")
 	locked.Flags = "le"
 
+	// A release bind on an ordinary key is fine as a press bind: both ends
+	// belong to the same deliberate chord. Rebinding the launcher to Super+D
+	// in the settings keeps the release flag, and dropping it would silently
+	// lose the bind.
+	onPlainKey := bind([]string{"SUPER"}, "D", "exec", "ambxst run launcher")
+	onPlainKey.Flags = "r"
+
 	out := g.GenerateKeybinds(ipc.ConfigKeybinds{
-		Custom: []ipc.Keybind{release, locked},
+		Custom: []ipc.Keybind{release, onPlainKey, locked},
 	})
 
 	if strings.Contains(out, "Super_L") {
-		t.Errorf("release bind was emitted:\n%s", out)
+		t.Errorf("release bind on a modifier was emitted:\n%s", out)
+	}
+	if !strings.Contains(out, `Mod+D { spawn-sh "ambxst run launcher"; }`) {
+		t.Errorf("release bind on an ordinary key was dropped:\n%s", out)
 	}
 	want := `    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "ambxst volume up"; }`
 	if !strings.Contains(out, want) {
